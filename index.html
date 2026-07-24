@@ -10,6 +10,7 @@
     --bg:#12151C; --panel:#1B2029; --panel2:#232936;
     --ink:#E8E4DA; --ink-dim:#8B8FA0; --line:#2E3547;
     --accent:#E8A33D; --accent-soft:rgba(232,163,61,.14);
+    --warn:#E8A33D;
   }
   *{box-sizing:border-box; margin:0; padding:0;}
   body{
@@ -20,26 +21,60 @@
 
   /* ===== 설정 화면 ===== */
   #setup{
-    max-width:720px; margin:0 auto; padding:48px 24px;
+    max-width:720px; margin:0 auto; padding:48px 24px 80px;
     height:100vh; overflow-y:auto;
   }
   #setup h1{font-size:26px; font-weight:600; margin-bottom:6px;}
-  #setup .sub{color:var(--ink-dim); font-size:14px; margin-bottom:32px; line-height:1.6;}
+  #setup .sub{color:var(--ink-dim); font-size:14px; margin-bottom:28px; line-height:1.6;}
   #setup label{display:block; font-size:13px; font-weight:600; color:var(--accent); margin:24px 0 8px; letter-spacing:.04em;}
   #setup input, #setup textarea{
     width:100%; background:var(--panel); border:1px solid var(--line); border-radius:10px;
     color:var(--ink); font-size:15px; padding:14px 16px; font-family:inherit;
   }
   #setup input:focus, #setup textarea:focus{outline:none; border-color:var(--accent);}
-  #setup textarea{min-height:260px; line-height:1.7; resize:vertical; font-family:'Noto Serif KR',serif;}
+  #setup textarea{min-height:240px; line-height:1.7; resize:vertical; font-family:'Noto Serif KR',serif;}
   .hint{font-size:12.5px; color:var(--ink-dim); margin-top:8px; line-height:1.7;}
   .hint b{color:var(--ink);}
+  #urlWarn{
+    display:none; font-size:13px; color:var(--warn); background:var(--accent-soft);
+    border:1px solid var(--accent); border-radius:8px; padding:10px 14px; margin-top:10px; line-height:1.7;
+  }
   #startBtn{
-    margin-top:32px; width:100%; padding:16px; border:none; border-radius:10px;
+    margin-top:28px; width:100%; padding:16px; border:none; border-radius:10px;
     background:var(--accent); color:#1A1408; font-size:16px; font-weight:600; cursor:pointer;
   }
   #startBtn:hover{filter:brightness(1.08);}
   #setupErr{color:#E86A5E; font-size:13px; margin-top:12px; display:none;}
+  .row2{display:flex; gap:16px;}
+  .row2 > div{flex:1;}
+
+  /* ===== 저장된 강의안 목록 ===== */
+  #deckSection{margin-bottom:8px;}
+  #deckSection h2{font-size:14px; font-weight:600; color:var(--accent); letter-spacing:.04em; margin-bottom:10px;}
+  .deck{
+    display:flex; align-items:center; gap:12px;
+    background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    padding:12px 16px; margin-bottom:8px;
+  }
+  .deck:hover{border-color:var(--accent);}
+  .deck .info{flex:1; min-width:0; cursor:pointer;}
+  .deck .title{font-size:15px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .deck .meta{font-size:12px; color:var(--ink-dim); margin-top:2px;}
+  .deck button{
+    background:none; border:1px solid var(--line); color:var(--ink-dim);
+    border-radius:7px; padding:6px 10px; font-size:12.5px; cursor:pointer; font-family:inherit;
+    flex-shrink:0;
+  }
+  .deck button:hover{border-color:var(--accent); color:var(--accent);}
+  .deck button.play{border-color:var(--accent); color:var(--accent); font-weight:600;}
+  #deckEmpty{font-size:13px; color:var(--ink-dim); padding:4px 2px 0;}
+  .deck-tools{display:flex; gap:8px; margin-top:6px;}
+  .deck-tools button{
+    background:none; border:none; color:var(--ink-dim); font-size:12px;
+    cursor:pointer; text-decoration:underline; font-family:inherit; padding:2px;
+  }
+  .deck-tools button:hover{color:var(--accent);}
+  #importFile{display:none;}
 
   /* ===== 프레젠터 화면 ===== */
   #presenter{display:none; height:100vh; flex-direction:column;}
@@ -116,23 +151,53 @@
 <!-- 설정 화면 -->
 <div id="setup">
   <h1>강의 프레젠터</h1>
-  <p class="sub">구글슬라이드와 강의 원고를 한 화면에서 함께 넘깁니다.<br>같은 크롬에서 창을 여러 개 열면 모든 창이 함께 넘어갑니다.</p>
+  <p class="sub">구글슬라이드와 강의 원고를 한 화면에서 함께 넘깁니다.<br>강의안은 이 브라우저에 저장되어 다음 수업 때 목록에서 바로 열 수 있어요.</p>
 
-  <label>1. 구글슬라이드 링크</label>
-  <input id="slideUrl" type="text" placeholder="https://docs.google.com/presentation/d/...">
+  <div id="deckSection">
+    <h2>저장된 강의안</h2>
+    <div id="deckList"></div>
+    <p id="deckEmpty">아직 저장된 강의안이 없습니다. 아래에 입력하고 시작하면 자동으로 저장돼요.</p>
+    <div class="deck-tools">
+      <button onclick="exportDecks()">전체 백업 내보내기</button>
+      <button onclick="document.getElementById('importFile').click()">백업 가져오기</button>
+      <input type="file" id="importFile" accept=".json" onchange="importDecks(event)">
+    </div>
+  </div>
+
+  <label>강의안 제목</label>
+  <input id="deckTitle" type="text" placeholder="예: 수채화 기초 1주차 — 물 조절">
+
+  <label>구글슬라이드 링크 — 반드시 '웹에 게시' 링크</label>
+  <input id="slideUrl" type="text" oninput="checkUrl()" placeholder="https://docs.google.com/presentation/d/e/2PACX-...">
   <p class="hint">
-    슬라이드 문서에서 <b>공유 → 링크가 있는 모든 사용자(뷰어)</b>로 설정하거나,
-    <b>파일 → 공유 → 웹에 게시</b>한 링크를 붙여넣으세요. 편집 링크를 그대로 붙여넣어도 됩니다.
+    슬라이드에서 <b>파일 → 공유 → 웹에 게시 → 게시</b>를 누른 뒤 나오는 링크를 붙여넣으세요.
+    주소에 <b>/d/e/2PACX-</b> 가 들어 있으면 맞는 링크입니다.
+    일반 공유 링크는 화면은 나오지만 <b>슬라이드가 안 넘어갑니다.</b>
   </p>
+  <div id="urlWarn">
+    ⚠️ 일반 공유 링크예요. 이 링크로는 슬라이드 이동이 안 될 수 있습니다.
+    슬라이드 문서에서 <b>파일 → 공유 → 웹에 게시</b>를 한 뒤, 그 링크(/d/e/2PACX-...)를 붙여넣어 주세요.
+  </div>
 
-  <label>2. 강의 원고</label>
+  <div class="row2">
+    <div>
+      <label>총 슬라이드 장수</label>
+      <input id="totalSlides" type="number" min="1" placeholder="예: 15">
+      <p class="hint">비워두면 원고 구분(---) 개수로 계산합니다.</p>
+    </div>
+    <div>
+      <label>&nbsp;</label>
+      <p class="hint" style="margin-top:14px;">원고가 슬라이드보다 적으면 나머지 장은 "(원고 없음)"으로 표시되고 슬라이드는 끝까지 넘어갑니다.</p>
+    </div>
+  </div>
+
+  <label>강의 원고</label>
   <textarea id="scriptText" placeholder="1번 슬라이드 원고를 쓰고&#10;&#10;---&#10;&#10;2번 슬라이드 원고를 쓰고&#10;&#10;---&#10;&#10;이렇게 --- 로 구분해주세요."></textarea>
   <p class="hint">
-    슬라이드 순서대로 원고를 쓰고, 슬라이드가 바뀌는 지점마다 한 줄에 <b>---</b> 만 입력해 구분하세요.
-    구분한 개수 = 슬라이드 장수로 인식합니다.
+    슬라이드가 바뀌는 지점마다 한 줄에 <b>---</b> 만 입력해 구분하세요.
   </p>
 
-  <button id="startBtn" onclick="startPresent()">프레젠터 시작</button>
+  <button id="startBtn" onclick="startPresent()">저장하고 시작</button>
   <p id="setupErr"></p>
 </div>
 
@@ -163,6 +228,7 @@
     <button id="vScript" onclick="setView('script')">원고만</button>
     <button onclick="openSlideWindow()" title="프로젝터용 슬라이드 전용 창 열기">⧉ 새 창</button>
     <span class="spacer"></span>
+    <button id="modeBtn" onclick="toggleNavMode()" title="슬라이드가 안 넘어가면 눌러보세요">이동방식 A</button>
     <button onclick="fontSize(-2)">글자−</button>
     <button onclick="fontSize(2)">글자＋</button>
     <button onclick="toggleLayout()">↕ 배치</button>
@@ -172,10 +238,122 @@
 
 <script>
 let sections = [];
+let total = 1;
 let cur = 0;
 let embedBase = '';
+let navMode = 'A'; // A: slide=id.pN 방식 / B: #번호 방식
 let activeFrame = null;
 let sec = 0, timerRunning = false, timerInt = null;
+let editingId = null;
+
+/* ===== 강의안 저장소 ===== */
+const DECK_KEY = 'lecturePresenterDecks';
+let storageOK = true;
+try{
+  localStorage.setItem('__t','1'); localStorage.removeItem('__t');
+}catch(e){ storageOK = false; }
+
+function loadDecks(){
+  if(!storageOK) return [];
+  try{ return JSON.parse(localStorage.getItem(DECK_KEY) || '[]'); }
+  catch(e){ return []; }
+}
+function saveDecks(decks){
+  if(!storageOK) return;
+  try{ localStorage.setItem(DECK_KEY, JSON.stringify(decks)); }catch(e){}
+}
+function upsertDeck(title, u, s, n){
+  if(!storageOK) return;
+  const decks = loadDecks();
+  const now = Date.now();
+  if(editingId){
+    const d = decks.find(x => x.id === editingId);
+    if(d){ d.title = title; d.u = u; d.s = s; d.n = n; d.updated = now; saveDecks(decks); renderDeckList(); return; }
+  }
+  const id = 'd' + now + Math.floor(Math.random()*1000);
+  decks.push({id, title, u, s, n, updated: now});
+  editingId = id;
+  saveDecks(decks); renderDeckList();
+}
+function deleteDeck(id){
+  const decks = loadDecks().filter(x => x.id !== id);
+  saveDecks(decks); renderDeckList();
+  if(editingId === id) editingId = null;
+}
+function fillFromDeck(d){
+  editingId = d.id;
+  document.getElementById('deckTitle').value = d.title || '';
+  document.getElementById('slideUrl').value = d.u || '';
+  document.getElementById('scriptText').value = d.s || '';
+  document.getElementById('totalSlides').value = d.n || '';
+  checkUrl();
+}
+function renderDeckList(){
+  const list = document.getElementById('deckList');
+  const empty = document.getElementById('deckEmpty');
+  const decks = loadDecks().sort((a,b) => b.updated - a.updated);
+  list.innerHTML = '';
+  empty.style.display = decks.length ? 'none' : 'block';
+  if(!storageOK){
+    empty.textContent = '이 환경에서는 브라우저 저장이 지원되지 않아요. izzy-lee.github.io 에 올린 페이지에서 사용하면 저장됩니다.';
+    empty.style.display = 'block';
+  }
+  decks.forEach(d => {
+    const cnt = d.n || (d.s || '').split(/\n\s*---\s*\n?/).length;
+    const date = new Date(d.updated);
+    const dateStr = (date.getMonth()+1) + '/' + date.getDate();
+    const el = document.createElement('div');
+    el.className = 'deck';
+    const info = document.createElement('div');
+    info.className = 'info';
+    info.innerHTML = '<div class="title"></div><div class="meta">슬라이드 ' + cnt + '장 · ' + dateStr + ' 수정</div>';
+    info.querySelector('.title').textContent = d.title || '(제목 없음)';
+    info.onclick = () => fillFromDeck(d);
+    info.title = '클릭하면 아래 입력칸에 불러옵니다';
+    const playBtn = document.createElement('button');
+    playBtn.className = 'play'; playBtn.textContent = '▶ 시작';
+    playBtn.onclick = () => { fillFromDeck(d); startPresent(); };
+    const delBtn = document.createElement('button');
+    delBtn.textContent = '삭제';
+    delBtn.onclick = () => {
+      if(confirm('"' + (d.title || '제목 없음') + '" 강의안을 삭제할까요?')) deleteDeck(d.id);
+    };
+    el.appendChild(info); el.appendChild(playBtn); el.appendChild(delBtn);
+    list.appendChild(el);
+  });
+}
+
+/* ===== 백업 ===== */
+function exportDecks(){
+  const blob = new Blob([JSON.stringify(loadDecks(), null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  const d = new Date();
+  a.download = '강의안백업_' + d.getFullYear() + (d.getMonth()+1) + d.getDate() + '.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+function importDecks(ev){
+  const file = ev.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try{
+      const incoming = JSON.parse(reader.result);
+      if(!Array.isArray(incoming)) throw new Error();
+      const decks = loadDecks();
+      incoming.forEach(d => {
+        if(!d.id) return;
+        const i = decks.findIndex(x => x.id === d.id);
+        if(i >= 0) decks[i] = d; else decks.push(d);
+      });
+      saveDecks(decks); renderDeckList();
+      alert(incoming.length + '개 강의안을 가져왔어요.');
+    }catch(e){ alert('백업 파일을 읽지 못했어요. 파일을 확인해주세요.'); }
+  };
+  reader.readAsText(file);
+  ev.target.value = '';
+}
 
 /* ===== 창 간 동기화 ===== */
 const bc = ('BroadcastChannel' in window) ? new BroadcastChannel('lecture-presenter') : null;
@@ -185,43 +363,60 @@ if(bc){
     if(m.type === 'nav' && typeof m.cur === 'number'){
       goTo(m.cur, false);
     }
+    if(m.type === 'mode' && m.m && m.m !== navMode){
+      navMode = m.m; applyModeBtn(); swapFrame();
+    }
     if(m.type === 'hello' && document.getElementById('presenter').style.display === 'flex'){
-      // 새로 열린 창에게 현재 위치를 알려줌
       bc.postMessage({type:'nav', cur});
+      bc.postMessage({type:'mode', m:navMode});
     }
   };
 }
 function broadcast(){ if(bc) bc.postMessage({type:'nav', cur}); }
 
-function parseEmbedBase(url){
+/* ===== 링크 처리 ===== */
+function parseEmbed(url){
   let m = url.match(/\/presentation\/d\/e\/([\w-]+)/);
-  if(m) return 'https://docs.google.com/presentation/d/e/' + m[1] + '/embed';
+  if(m) return {base:'https://docs.google.com/presentation/d/e/' + m[1] + '/embed', published:true};
   m = url.match(/\/presentation\/d\/([\w-]+)/);
-  if(m) return 'https://docs.google.com/presentation/d/' + m[1] + '/embed';
+  if(m) return {base:'https://docs.google.com/presentation/d/' + m[1] + '/embed', published:false};
   return null;
+}
+function checkUrl(){
+  const url = document.getElementById('slideUrl').value.trim();
+  const p = parseEmbed(url);
+  document.getElementById('urlWarn').style.display = (p && !p.published) ? 'block' : 'none';
 }
 
 function slideSrc(n){
-  const p = '?start=false&loop=false&rm=minimal';
-  return n <= 1 ? embedBase + p : embedBase + p + '&slide=id.p' + n;
+  const q = '?start=false&loop=false&rm=minimal';
+  if(navMode === 'B'){
+    // 방식 B: 페이지 번호 해시. r 파라미터로 매번 새로 로드되게 함
+    return embedBase + q + '&r=' + n + '#' + n;
+  }
+  return n <= 1 ? embedBase + q : embedBase + q + '&slide=id.p' + n;
 }
 
 function startPresent(fromAuto){
   const url = document.getElementById('slideUrl').value.trim();
   const raw = document.getElementById('scriptText').value;
+  const title = document.getElementById('deckTitle').value.trim()
+    || '무제 강의안 ' + new Date().toLocaleDateString('ko-KR');
   const err = document.getElementById('setupErr');
-  embedBase = parseEmbedBase(url);
-  if(!embedBase){
+  const parsed = parseEmbed(url);
+  if(!parsed){
     err.textContent = '구글슬라이드 링크를 인식하지 못했어요. 링크를 다시 확인해주세요.';
     err.style.display = 'block'; return;
   }
+  embedBase = parsed.base;
   sections = raw.split(/\n\s*---\s*\n?/).map(s => s.trim());
-  if(sections.length === 0 || (sections.length === 1 && !sections[0])){
-    sections = ['(원고 없음)'];
-  }
+  if(sections.length === 0 || (sections.length === 1 && !sections[0])) sections = [''];
+  const inputTotal = parseInt(document.getElementById('totalSlides').value, 10);
+  total = Math.max(sections.length, isNaN(inputTotal) ? 1 : inputTotal);
   err.style.display = 'none';
+  if(fromAuto !== true) upsertDeck(title, url, raw, total);
   try{
-    location.hash = btoa(unescape(encodeURIComponent(JSON.stringify({u:url, s:raw}))));
+    location.hash = btoa(unescape(encodeURIComponent(JSON.stringify({u:url, s:raw, t:title, n:total}))));
   }catch(e){}
 
   cur = 0;
@@ -231,21 +426,18 @@ function startPresent(fromAuto){
   activeFrame.src = slideSrc(1);
   activeFrame.classList.add('show');
   render();
-  // 이미 열려있는 다른 창이 있으면 현재 위치를 받아옴
   if(bc && fromAuto) bc.postMessage({type:'hello'});
 }
 
 function render(){
-  document.getElementById('counter').textContent = (cur+1) + ' / ' + sections.length;
+  document.getElementById('counter').textContent = (cur+1) + ' / ' + total;
   document.getElementById('scriptNow').textContent = sections[cur] || '(원고 없음)';
   document.getElementById('scriptNow').scrollTop = 0;
   const nextEl = document.getElementById('scriptNext');
-  if(cur + 1 < sections.length){
-    nextEl.style.display = 'block';
+  if(cur + 1 < total){
     nextEl.innerHTML = '<span class="tag">다음 슬라이드</span><br>';
     nextEl.appendChild(document.createTextNode((sections[cur+1] || '(원고 없음)').slice(0, 120)));
   }else{
-    nextEl.style.display = 'block';
     nextEl.innerHTML = '<span class="tag">마지막 슬라이드</span>';
   }
 }
@@ -263,11 +455,11 @@ function swapFrame(){
   };
   hidden.onload = () => setTimeout(swap, 120);
   hidden.src = target;
-  setTimeout(swap, 2000); // 안전장치
+  setTimeout(swap, 2000);
 }
 
 function goTo(n, doBroadcast){
-  if(n < 0 || n >= sections.length || n === cur) return;
+  if(n < 0 || n >= total || n === cur) return;
   cur = n;
   render();
   if(!document.body.classList.contains('view-script')) swapFrame();
@@ -276,6 +468,17 @@ function goTo(n, doBroadcast){
 
 function go(dir){ goTo(cur + dir, true); }
 
+/* ===== 이동 방식 전환 ===== */
+function applyModeBtn(){
+  document.getElementById('modeBtn').textContent = '이동방식 ' + navMode;
+}
+function toggleNavMode(){
+  navMode = navMode === 'A' ? 'B' : 'A';
+  applyModeBtn();
+  swapFrame();
+  if(bc) bc.postMessage({type:'mode', m:navMode});
+}
+
 /* ===== 보기 모드 ===== */
 function setView(v){
   document.body.classList.remove('view-slide','view-script');
@@ -283,8 +486,7 @@ function setView(v){
   if(v === 'script') document.body.classList.add('view-script');
   ['vFull','vSlide','vScript'].forEach(id => document.getElementById(id).classList.remove('active'));
   document.getElementById(v === 'slide' ? 'vSlide' : v === 'script' ? 'vScript' : 'vFull').classList.add('active');
-  // 원고만 보다가 다시 슬라이드가 보이는 모드로 오면 현재 슬라이드로 갱신
-  if(v !== 'script' && activeFrame && !activeFrame.src.includes('slide=id.p' + (cur+1)) && cur > 0) swapFrame();
+  if(v !== 'script' && activeFrame && cur > 0) swapFrame();
 }
 
 function openSlideWindow(){
@@ -306,6 +508,7 @@ function backToSetup(){
   document.getElementById('presenter').style.display = 'none';
   document.getElementById('setup').style.display = 'block';
   pauseTimer();
+  renderDeckList();
 }
 
 /* ---- 타이머 ---- */
@@ -340,13 +543,17 @@ document.addEventListener('keydown', e => {
   if(e.key === 'Home'){ goTo(0, true); }
 });
 
-/* ---- 해시에서 설정 복원 + 자동 시작 ---- */
+/* ---- 초기화 ---- */
 window.addEventListener('load', () => {
+  renderDeckList();
   if(location.hash.length > 1){
     try{
       const data = JSON.parse(decodeURIComponent(escape(atob(location.hash.slice(1)))));
       if(data.u) document.getElementById('slideUrl').value = data.u;
       if(data.s) document.getElementById('scriptText').value = data.s;
+      if(data.t) document.getElementById('deckTitle').value = data.t;
+      if(data.n) document.getElementById('totalSlides').value = data.n;
+      checkUrl();
       const view = new URLSearchParams(location.search).get('view');
       if(view){
         startPresent(true);
