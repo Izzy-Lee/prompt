@@ -77,6 +77,13 @@
     padding:2px 8px; margin-bottom:6px; letter-spacing:.05em;
   }
 
+  /* ===== 보기 모드 ===== */
+  body.view-slide #scriptWrap{display:none;}
+  body.view-slide #slideWrap{flex:1;}
+  body.view-script #slideWrap{display:none;}
+  body.view-script #scriptWrap{border:none;}
+  body.view-script #scriptNow{font-size:24px; max-width:860px; margin:0 auto; width:100%;}
+
   /* ===== 하단 컨트롤 바 ===== */
   #bar{
     display:flex; align-items:center; gap:10px;
@@ -88,15 +95,19 @@
     border-radius:8px; padding:8px 14px; font-size:14px; cursor:pointer; font-family:inherit;
   }
   #bar button:hover{border-color:var(--accent); color:var(--accent);}
+  #bar button.active{border-color:var(--accent); color:var(--accent); background:var(--accent-soft);}
   #bar button.nav{font-size:17px; padding:8px 22px; font-weight:600;}
   #counter{font-size:15px; font-weight:600; min-width:70px; text-align:center; color:var(--accent);}
   #timer{font-variant-numeric:tabular-nums; font-size:14px; color:var(--ink-dim); min-width:64px; text-align:center;}
   .spacer{flex:1;}
-  .kbd-hint{font-size:11.5px; color:var(--ink-dim);}
+  #syncDot{
+    width:8px; height:8px; border-radius:50%; background:#4CAF7D; display:inline-block;
+    margin-right:4px; vertical-align:middle;
+  }
+  #syncLabel{font-size:11.5px; color:var(--ink-dim);}
   @media (max-width:900px){
     #stage{flex-direction:column;}
     #scriptWrap{border-left:none; border-top:1px solid var(--line);}
-    .kbd-hint{display:none;}
   }
 </style>
 </head>
@@ -105,7 +116,7 @@
 <!-- 설정 화면 -->
 <div id="setup">
   <h1>강의 프레젠터</h1>
-  <p class="sub">구글슬라이드와 강의 원고를 한 화면에서 함께 넘깁니다.<br>버튼이나 방향키 하나로 슬라이드와 원고가 같이 이동해요.</p>
+  <p class="sub">구글슬라이드와 강의 원고를 한 화면에서 함께 넘깁니다.<br>같은 크롬에서 창을 여러 개 열면 모든 창이 함께 넘어갑니다.</p>
 
   <label>1. 구글슬라이드 링크</label>
   <input id="slideUrl" type="text" placeholder="https://docs.google.com/presentation/d/...">
@@ -118,7 +129,7 @@
   <textarea id="scriptText" placeholder="1번 슬라이드 원고를 쓰고&#10;&#10;---&#10;&#10;2번 슬라이드 원고를 쓰고&#10;&#10;---&#10;&#10;이렇게 --- 로 구분해주세요."></textarea>
   <p class="hint">
     슬라이드 순서대로 원고를 쓰고, 슬라이드가 바뀌는 지점마다 한 줄에 <b>---</b> 만 입력해 구분하세요.
-    원고가 없는 슬라이드는 --- 사이를 비워두면 됩니다. 구분한 개수 = 슬라이드 장수로 인식합니다.
+    구분한 개수 = 슬라이드 장수로 인식합니다.
   </p>
 
   <button id="startBtn" onclick="startPresent()">프레젠터 시작</button>
@@ -141,16 +152,21 @@
     <button class="nav" onclick="go(-1)" title="이전 (←)">◀</button>
     <span id="counter">1 / 1</span>
     <button class="nav" onclick="go(1)" title="다음 (→ 또는 스페이스)">▶</button>
+    <span><span id="syncDot"></span><span id="syncLabel">창 동기화</span></span>
     <span class="spacer"></span>
     <span id="timer">00:00</span>
     <button onclick="toggleTimer()" id="timerBtn">⏱ 시작</button>
     <button onclick="resetTimer()">리셋</button>
     <span class="spacer"></span>
+    <button id="vFull" onclick="setView('full')" class="active">전체</button>
+    <button id="vSlide" onclick="setView('slide')">슬라이드만</button>
+    <button id="vScript" onclick="setView('script')">원고만</button>
+    <button onclick="openSlideWindow()" title="프로젝터용 슬라이드 전용 창 열기">⧉ 새 창</button>
+    <span class="spacer"></span>
     <button onclick="fontSize(-2)">글자−</button>
     <button onclick="fontSize(2)">글자＋</button>
     <button onclick="toggleLayout()">↕ 배치</button>
     <button onclick="backToSetup()">✎ 편집</button>
-    <span class="kbd-hint">←/→ 이동 · 스페이스 다음</span>
   </div>
 </div>
 
@@ -160,6 +176,22 @@ let cur = 0;
 let embedBase = '';
 let activeFrame = null;
 let sec = 0, timerRunning = false, timerInt = null;
+
+/* ===== 창 간 동기화 ===== */
+const bc = ('BroadcastChannel' in window) ? new BroadcastChannel('lecture-presenter') : null;
+if(bc){
+  bc.onmessage = (e) => {
+    const m = e.data || {};
+    if(m.type === 'nav' && typeof m.cur === 'number'){
+      goTo(m.cur, false);
+    }
+    if(m.type === 'hello' && document.getElementById('presenter').style.display === 'flex'){
+      // 새로 열린 창에게 현재 위치를 알려줌
+      bc.postMessage({type:'nav', cur});
+    }
+  };
+}
+function broadcast(){ if(bc) bc.postMessage({type:'nav', cur}); }
 
 function parseEmbedBase(url){
   let m = url.match(/\/presentation\/d\/e\/([\w-]+)/);
@@ -174,7 +206,7 @@ function slideSrc(n){
   return n <= 1 ? embedBase + p : embedBase + p + '&slide=id.p' + n;
 }
 
-function startPresent(){
+function startPresent(fromAuto){
   const url = document.getElementById('slideUrl').value.trim();
   const raw = document.getElementById('scriptText').value;
   const err = document.getElementById('setupErr');
@@ -188,7 +220,6 @@ function startPresent(){
     sections = ['(원고 없음)'];
   }
   err.style.display = 'none';
-  // 상태를 URL 해시에 저장 → 새로고침해도 유지, 북마크 가능
   try{
     location.hash = btoa(unescape(encodeURIComponent(JSON.stringify({u:url, s:raw}))));
   }catch(e){}
@@ -200,6 +231,8 @@ function startPresent(){
   activeFrame.src = slideSrc(1);
   activeFrame.classList.add('show');
   render();
+  // 이미 열려있는 다른 창이 있으면 현재 위치를 받아옴
+  if(bc && fromAuto) bc.postMessage({type:'hello'});
 }
 
 function render(){
@@ -217,12 +250,7 @@ function render(){
   }
 }
 
-function go(dir){
-  const next = cur + dir;
-  if(next < 0 || next >= sections.length) return;
-  cur = next;
-  render();
-  // 더블 버퍼링: 숨은 iframe에 먼저 로드한 뒤 교체 → 깜빡임 최소화
+function swapFrame(){
   const hidden = activeFrame.id === 'frameA'
     ? document.getElementById('frameB') : document.getElementById('frameA');
   const target = slideSrc(cur + 1);
@@ -238,10 +266,36 @@ function go(dir){
   setTimeout(swap, 2000); // 안전장치
 }
 
+function goTo(n, doBroadcast){
+  if(n < 0 || n >= sections.length || n === cur) return;
+  cur = n;
+  render();
+  if(!document.body.classList.contains('view-script')) swapFrame();
+  if(doBroadcast !== false) broadcast();
+}
+
+function go(dir){ goTo(cur + dir, true); }
+
+/* ===== 보기 모드 ===== */
+function setView(v){
+  document.body.classList.remove('view-slide','view-script');
+  if(v === 'slide') document.body.classList.add('view-slide');
+  if(v === 'script') document.body.classList.add('view-script');
+  ['vFull','vSlide','vScript'].forEach(id => document.getElementById(id).classList.remove('active'));
+  document.getElementById(v === 'slide' ? 'vSlide' : v === 'script' ? 'vScript' : 'vFull').classList.add('active');
+  // 원고만 보다가 다시 슬라이드가 보이는 모드로 오면 현재 슬라이드로 갱신
+  if(v !== 'script' && activeFrame && !activeFrame.src.includes('slide=id.p' + (cur+1)) && cur > 0) swapFrame();
+}
+
+function openSlideWindow(){
+  const u = location.origin + location.pathname + '?view=slide' + location.hash;
+  window.open(u, '_blank', 'noopener');
+}
+
 function fontSize(d){
   const el = document.getElementById('scriptNow');
   const now = parseFloat(getComputedStyle(el).fontSize);
-  el.style.fontSize = Math.min(40, Math.max(14, now + d)) + 'px';
+  el.style.fontSize = Math.min(48, Math.max(14, now + d)) + 'px';
 }
 
 function toggleLayout(){
@@ -283,16 +337,21 @@ document.addEventListener('keydown', e => {
   if(e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
   if(e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown'){ e.preventDefault(); go(1); }
   if(e.key === 'ArrowLeft' || e.key === 'PageUp'){ e.preventDefault(); go(-1); }
-  if(e.key === 'Home'){ cur = 0; render(); go(0); }
+  if(e.key === 'Home'){ goTo(0, true); }
 });
 
-/* ---- 해시에서 이전 설정 복원 ---- */
+/* ---- 해시에서 설정 복원 + 자동 시작 ---- */
 window.addEventListener('load', () => {
   if(location.hash.length > 1){
     try{
       const data = JSON.parse(decodeURIComponent(escape(atob(location.hash.slice(1)))));
       if(data.u) document.getElementById('slideUrl').value = data.u;
       if(data.s) document.getElementById('scriptText').value = data.s;
+      const view = new URLSearchParams(location.search).get('view');
+      if(view){
+        startPresent(true);
+        setView(view === 'slide' ? 'slide' : view === 'script' ? 'script' : 'full');
+      }
     }catch(e){}
   }
 });
