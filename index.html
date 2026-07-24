@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>강의 프레젠터 — 슬라이드 + 원고</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600&family=Pretendard:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#12151C; --panel:#1B2029; --panel2:#232936;
+    --ink:#E8E4DA; --ink-dim:#8B8FA0; --line:#2E3547;
+    --accent:#E8A33D; --accent-soft:rgba(232,163,61,.14);
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:'Pretendard',-apple-system,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;
+    height:100vh; overflow:hidden;
+  }
+
+  /* ===== 설정 화면 ===== */
+  #setup{
+    max-width:720px; margin:0 auto; padding:48px 24px;
+    height:100vh; overflow-y:auto;
+  }
+  #setup h1{font-size:26px; font-weight:600; margin-bottom:6px;}
+  #setup .sub{color:var(--ink-dim); font-size:14px; margin-bottom:32px; line-height:1.6;}
+  #setup label{display:block; font-size:13px; font-weight:600; color:var(--accent); margin:24px 0 8px; letter-spacing:.04em;}
+  #setup input, #setup textarea{
+    width:100%; background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    color:var(--ink); font-size:15px; padding:14px 16px; font-family:inherit;
+  }
+  #setup input:focus, #setup textarea:focus{outline:none; border-color:var(--accent);}
+  #setup textarea{min-height:260px; line-height:1.7; resize:vertical; font-family:'Noto Serif KR',serif;}
+  .hint{font-size:12.5px; color:var(--ink-dim); margin-top:8px; line-height:1.7;}
+  .hint b{color:var(--ink);}
+  #startBtn{
+    margin-top:32px; width:100%; padding:16px; border:none; border-radius:10px;
+    background:var(--accent); color:#1A1408; font-size:16px; font-weight:600; cursor:pointer;
+  }
+  #startBtn:hover{filter:brightness(1.08);}
+  #setupErr{color:#E86A5E; font-size:13px; margin-top:12px; display:none;}
+
+  /* ===== 프레젠터 화면 ===== */
+  #presenter{display:none; height:100vh; flex-direction:column;}
+  #stage{flex:1; display:flex; min-height:0;}
+  #stage.vertical{flex-direction:column;}
+
+  #slideWrap{
+    flex:1.4; position:relative; background:#000; min-width:0; min-height:0;
+  }
+  #slideWrap iframe{
+    position:absolute; inset:0; width:100%; height:100%; border:0;
+    opacity:0; transition:opacity .25s ease;
+  }
+  #slideWrap iframe.show{opacity:1;}
+
+  #scriptWrap{
+    flex:1; display:flex; flex-direction:column; min-width:0; min-height:0;
+    background:var(--panel); border-left:1px solid var(--line);
+  }
+  #stage.vertical #scriptWrap{border-left:none; border-top:1px solid var(--line);}
+  #scriptNow{
+    flex:1; overflow-y:auto; padding:28px 30px;
+    font-family:'Noto Serif KR',serif; line-height:1.95; white-space:pre-wrap;
+    font-size:20px;
+  }
+  #scriptNext{
+    border-top:1px dashed var(--line); padding:14px 30px 18px;
+    color:var(--ink-dim); font-size:13.5px; line-height:1.7;
+    max-height:110px; overflow:hidden; white-space:pre-wrap;
+    font-family:'Noto Serif KR',serif;
+  }
+  #scriptNext .tag{
+    display:inline-block; font-family:'Pretendard',sans-serif; font-size:11px;
+    color:var(--accent); background:var(--accent-soft); border-radius:4px;
+    padding:2px 8px; margin-bottom:6px; letter-spacing:.05em;
+  }
+
+  /* ===== 하단 컨트롤 바 ===== */
+  #bar{
+    display:flex; align-items:center; gap:10px;
+    background:var(--panel2); border-top:1px solid var(--line);
+    padding:10px 16px; flex-wrap:wrap;
+  }
+  #bar button{
+    background:var(--panel); border:1px solid var(--line); color:var(--ink);
+    border-radius:8px; padding:8px 14px; font-size:14px; cursor:pointer; font-family:inherit;
+  }
+  #bar button:hover{border-color:var(--accent); color:var(--accent);}
+  #bar button.nav{font-size:17px; padding:8px 22px; font-weight:600;}
+  #counter{font-size:15px; font-weight:600; min-width:70px; text-align:center; color:var(--accent);}
+  #timer{font-variant-numeric:tabular-nums; font-size:14px; color:var(--ink-dim); min-width:64px; text-align:center;}
+  .spacer{flex:1;}
+  .kbd-hint{font-size:11.5px; color:var(--ink-dim);}
+  @media (max-width:900px){
+    #stage{flex-direction:column;}
+    #scriptWrap{border-left:none; border-top:1px solid var(--line);}
+    .kbd-hint{display:none;}
+  }
+</style>
+</head>
+<body>
+
+<!-- 설정 화면 -->
+<div id="setup">
+  <h1>강의 프레젠터</h1>
+  <p class="sub">구글슬라이드와 강의 원고를 한 화면에서 함께 넘깁니다.<br>버튼이나 방향키 하나로 슬라이드와 원고가 같이 이동해요.</p>
+
+  <label>1. 구글슬라이드 링크</label>
+  <input id="slideUrl" type="text" placeholder="https://docs.google.com/presentation/d/...">
+  <p class="hint">
+    슬라이드 문서에서 <b>공유 → 링크가 있는 모든 사용자(뷰어)</b>로 설정하거나,
+    <b>파일 → 공유 → 웹에 게시</b>한 링크를 붙여넣으세요. 편집 링크를 그대로 붙여넣어도 됩니다.
+  </p>
+
+  <label>2. 강의 원고</label>
+  <textarea id="scriptText" placeholder="1번 슬라이드 원고를 쓰고&#10;&#10;---&#10;&#10;2번 슬라이드 원고를 쓰고&#10;&#10;---&#10;&#10;이렇게 --- 로 구분해주세요."></textarea>
+  <p class="hint">
+    슬라이드 순서대로 원고를 쓰고, 슬라이드가 바뀌는 지점마다 한 줄에 <b>---</b> 만 입력해 구분하세요.
+    원고가 없는 슬라이드는 --- 사이를 비워두면 됩니다. 구분한 개수 = 슬라이드 장수로 인식합니다.
+  </p>
+
+  <button id="startBtn" onclick="startPresent()">프레젠터 시작</button>
+  <p id="setupErr"></p>
+</div>
+
+<!-- 프레젠터 화면 -->
+<div id="presenter">
+  <div id="stage">
+    <div id="slideWrap">
+      <iframe id="frameA" allowfullscreen></iframe>
+      <iframe id="frameB" allowfullscreen></iframe>
+    </div>
+    <div id="scriptWrap">
+      <div id="scriptNow"></div>
+      <div id="scriptNext"></div>
+    </div>
+  </div>
+  <div id="bar">
+    <button class="nav" onclick="go(-1)" title="이전 (←)">◀</button>
+    <span id="counter">1 / 1</span>
+    <button class="nav" onclick="go(1)" title="다음 (→ 또는 스페이스)">▶</button>
+    <span class="spacer"></span>
+    <span id="timer">00:00</span>
+    <button onclick="toggleTimer()" id="timerBtn">⏱ 시작</button>
+    <button onclick="resetTimer()">리셋</button>
+    <span class="spacer"></span>
+    <button onclick="fontSize(-2)">글자−</button>
+    <button onclick="fontSize(2)">글자＋</button>
+    <button onclick="toggleLayout()">↕ 배치</button>
+    <button onclick="backToSetup()">✎ 편집</button>
+    <span class="kbd-hint">←/→ 이동 · 스페이스 다음</span>
+  </div>
+</div>
+
+<script>
+let sections = [];
+let cur = 0;
+let embedBase = '';
+let activeFrame = null;
+let sec = 0, timerRunning = false, timerInt = null;
+
+function parseEmbedBase(url){
+  let m = url.match(/\/presentation\/d\/e\/([\w-]+)/);
+  if(m) return 'https://docs.google.com/presentation/d/e/' + m[1] + '/embed';
+  m = url.match(/\/presentation\/d\/([\w-]+)/);
+  if(m) return 'https://docs.google.com/presentation/d/' + m[1] + '/embed';
+  return null;
+}
+
+function slideSrc(n){
+  const p = '?start=false&loop=false&rm=minimal';
+  return n <= 1 ? embedBase + p : embedBase + p + '&slide=id.p' + n;
+}
+
+function startPresent(){
+  const url = document.getElementById('slideUrl').value.trim();
+  const raw = document.getElementById('scriptText').value;
+  const err = document.getElementById('setupErr');
+  embedBase = parseEmbedBase(url);
+  if(!embedBase){
+    err.textContent = '구글슬라이드 링크를 인식하지 못했어요. 링크를 다시 확인해주세요.';
+    err.style.display = 'block'; return;
+  }
+  sections = raw.split(/\n\s*---\s*\n?/).map(s => s.trim());
+  if(sections.length === 0 || (sections.length === 1 && !sections[0])){
+    sections = ['(원고 없음)'];
+  }
+  err.style.display = 'none';
+  // 상태를 URL 해시에 저장 → 새로고침해도 유지, 북마크 가능
+  try{
+    location.hash = btoa(unescape(encodeURIComponent(JSON.stringify({u:url, s:raw}))));
+  }catch(e){}
+
+  cur = 0;
+  document.getElementById('setup').style.display = 'none';
+  document.getElementById('presenter').style.display = 'flex';
+  activeFrame = document.getElementById('frameA');
+  activeFrame.src = slideSrc(1);
+  activeFrame.classList.add('show');
+  render();
+}
+
+function render(){
+  document.getElementById('counter').textContent = (cur+1) + ' / ' + sections.length;
+  document.getElementById('scriptNow').textContent = sections[cur] || '(원고 없음)';
+  document.getElementById('scriptNow').scrollTop = 0;
+  const nextEl = document.getElementById('scriptNext');
+  if(cur + 1 < sections.length){
+    nextEl.style.display = 'block';
+    nextEl.innerHTML = '<span class="tag">다음 슬라이드</span><br>';
+    nextEl.appendChild(document.createTextNode((sections[cur+1] || '(원고 없음)').slice(0, 120)));
+  }else{
+    nextEl.style.display = 'block';
+    nextEl.innerHTML = '<span class="tag">마지막 슬라이드</span>';
+  }
+}
+
+function go(dir){
+  const next = cur + dir;
+  if(next < 0 || next >= sections.length) return;
+  cur = next;
+  render();
+  // 더블 버퍼링: 숨은 iframe에 먼저 로드한 뒤 교체 → 깜빡임 최소화
+  const hidden = activeFrame.id === 'frameA'
+    ? document.getElementById('frameB') : document.getElementById('frameA');
+  const target = slideSrc(cur + 1);
+  let swapped = false;
+  const swap = () => {
+    if(swapped) return; swapped = true;
+    hidden.classList.add('show');
+    activeFrame.classList.remove('show');
+    activeFrame = hidden;
+  };
+  hidden.onload = () => setTimeout(swap, 120);
+  hidden.src = target;
+  setTimeout(swap, 2000); // 안전장치
+}
+
+function fontSize(d){
+  const el = document.getElementById('scriptNow');
+  const now = parseFloat(getComputedStyle(el).fontSize);
+  el.style.fontSize = Math.min(40, Math.max(14, now + d)) + 'px';
+}
+
+function toggleLayout(){
+  document.getElementById('stage').classList.toggle('vertical');
+}
+
+function backToSetup(){
+  document.getElementById('presenter').style.display = 'none';
+  document.getElementById('setup').style.display = 'block';
+  pauseTimer();
+}
+
+/* ---- 타이머 ---- */
+function fmt(s){
+  const m = String(Math.floor(s/60)).padStart(2,'0');
+  return m + ':' + String(s%60).padStart(2,'0');
+}
+function toggleTimer(){ timerRunning ? pauseTimer() : startTimer(); }
+function startTimer(){
+  timerRunning = true;
+  document.getElementById('timerBtn').textContent = '⏸ 일시정지';
+  timerInt = setInterval(() => {
+    sec++; document.getElementById('timer').textContent = fmt(sec);
+  }, 1000);
+}
+function pauseTimer(){
+  timerRunning = false;
+  document.getElementById('timerBtn').textContent = '⏱ 시작';
+  clearInterval(timerInt);
+}
+function resetTimer(){
+  pauseTimer(); sec = 0;
+  document.getElementById('timer').textContent = '00:00';
+}
+
+/* ---- 키보드 ---- */
+document.addEventListener('keydown', e => {
+  if(document.getElementById('presenter').style.display !== 'flex') return;
+  if(e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if(e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown'){ e.preventDefault(); go(1); }
+  if(e.key === 'ArrowLeft' || e.key === 'PageUp'){ e.preventDefault(); go(-1); }
+  if(e.key === 'Home'){ cur = 0; render(); go(0); }
+});
+
+/* ---- 해시에서 이전 설정 복원 ---- */
+window.addEventListener('load', () => {
+  if(location.hash.length > 1){
+    try{
+      const data = JSON.parse(decodeURIComponent(escape(atob(location.hash.slice(1)))));
+      if(data.u) document.getElementById('slideUrl').value = data.u;
+      if(data.s) document.getElementById('scriptText').value = data.s;
+    }catch(e){}
+  }
+});
+</script>
+</body>
+</html>
