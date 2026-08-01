@@ -6,6 +6,7 @@
 <title>강의 프레젠터 — 슬라이드 + 원고</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600&family=Pretendard:wght@400;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
   :root{
     --bg:#12151C; --panel:#1B2029; --panel2:#232936;
@@ -160,10 +161,13 @@
     <div id="deckList"></div>
     <p id="deckEmpty">아직 저장된 강의안이 없습니다. 아래에 입력하고 시작하면 자동으로 저장돼요.</p>
     <div class="deck-tools">
-      <button onclick="exportDecks()">전체 백업 내보내기</button>
-      <button onclick="document.getElementById('importFile').click()">백업 가져오기</button>
+      <button onclick="gdriveBackup()">☁️ 드라이브에 백업</button>
+      <button onclick="gdriveRestore()">☁️ 드라이브에서 불러오기</button>
+      <button onclick="exportDecks()">파일로 내보내기</button>
+      <button onclick="document.getElementById('importFile').click()">파일 가져오기</button>
       <input type="file" id="importFile" accept=".json" onchange="importDecks(event)">
     </div>
+    <p id="gdriveStatus" class="hint" style="margin-top:6px;"></p>
   </div>
 
   <label>강의안 제목</label>
@@ -326,6 +330,7 @@ async function renderDeckList(){
       if(confirm('"' + (d.title || '제목 없음') + '" 강의안을 삭제할까요?')){
         await dbDel(d.id);
         if(editingId === d.id) editingId = null;
+        scheduleAutoBackup();
         renderDeckList();
       }
     };
@@ -366,6 +371,7 @@ async function startFromForm(){
   editingId = id;
   const deck = {id, title, s: raw, pdf: pdfBuf, pages, updated: Date.now()};
   try{ await dbPut(deck); }catch(e){}
+  scheduleAutoBackup();
   beginShow(deck);
 }
 
@@ -497,13 +503,31 @@ function b64ToBuf(b64){
   for(let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   return bytes.buffer;
 }
-async function exportDecks(){
+/* 백업 데이터 만들기/적용 — 파일·드라이브가 공용으로 씀 */
+async function buildBackupJSON(){
   const decks = await dbAll();
   const out = decks.map(d => ({
     id: d.id, title: d.title, s: d.s, pages: d.pages, updated: d.updated,
     pdfB64: d.pdf ? bufToB64(d.pdf) : null
   }));
-  const blob = new Blob([JSON.stringify(out)], {type:'application/json'});
+  return JSON.stringify(out);
+}
+async function applyBackup(incoming){
+  if(!Array.isArray(incoming)) throw new Error('형식 오류');
+  let n = 0;
+  for(const d of incoming){
+    if(!d.id) continue;
+    await dbPut({
+      id: d.id, title: d.title, s: d.s, pages: d.pages, updated: d.updated || Date.now(),
+      pdf: d.pdfB64 ? b64ToBuf(d.pdfB64) : null
+    });
+    n++;
+  }
+  return n;
+}
+
+async function exportDecks(){
+  const blob = new Blob([await buildBackupJSON()], {type:'application/json'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   const d = new Date();
@@ -517,21 +541,140 @@ function importDecks(ev){
   const reader = new FileReader();
   reader.onload = async () => {
     try{
-      const incoming = JSON.parse(reader.result);
-      if(!Array.isArray(incoming)) throw new Error();
-      for(const d of incoming){
-        if(!d.id) continue;
-        await dbPut({
-          id: d.id, title: d.title, s: d.s, pages: d.pages, updated: d.updated || Date.now(),
-          pdf: d.pdfB64 ? b64ToBuf(d.pdfB64) : null
-        });
-      }
+      const n = await applyBackup(JSON.parse(reader.result));
       renderDeckList();
-      alert(incoming.length + '개 강의안을 가져왔어요.');
+      alert(n + '개 강의안을 가져왔어요.');
     }catch(e){ alert('백업 파일을 읽지 못했어요. 파일을 확인해주세요.'); }
   };
   reader.readAsText(file);
   ev.target.value = '';
+}
+
+/* ===== 구글 드라이브 동기화 (drive.file: 이 앱이 만든 파일만 접근) ===== */
+// ▼ 구글 클라우드에서 만든 OAuth 클라이언트 ID를 여기 붙여넣으세요.
+const GDRIVE_CLIENT_ID = '81672717821-afpq7dtvc3u8ei29jpc1ic9c7gkic3on.apps.googleusercontent.com';
+const GDRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+const GDRIVE_FILENAME = '강의안백업.json';
+let gdriveToken = null;                 // {token, expiresAt}
+let gdriveFileId = localStorage.getItem('gdriveFileId') || null;
+let gdriveTokenClient = null;
+let autoBackupT = null;
+
+function gdriveConfigured(){ return GDRIVE_CLIENT_ID && !GDRIVE_CLIENT_ID.includes('PASTE'); }
+
+function setGStatus(msg){
+  const el = document.getElementById('gdriveStatus');
+  if(el) el.textContent = msg;
+}
+function updateGStatus(){
+  if(!gdriveConfigured()){ setGStatus('드라이브 백업: 설정 전 (개발자에게 클라이언트 ID 요청)'); return; }
+  const last = localStorage.getItem('gdriveLast');
+  if(last){
+    const d = new Date(parseInt(last,10));
+    setGStatus('드라이브 백업됨 · ' + d.toLocaleDateString('ko-KR') + ' ' + d.toTimeString().slice(0,5));
+  } else {
+    setGStatus('드라이브 백업: 아직 안 함 (버튼을 누르면 구글 로그인)');
+  }
+}
+
+function gdriveInit(){
+  if(gdriveTokenClient || !gdriveConfigured()) return;
+  if(!(window.google && google.accounts && google.accounts.oauth2)) return;
+  gdriveTokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: GDRIVE_CLIENT_ID, scope: GDRIVE_SCOPE, callback: () => {}
+  });
+}
+
+// 유효한 액세스 토큰 확보(만료 1분 전이면 새로 요청). interactive=true면 필요 시 로그인 팝업.
+function gdriveGetToken(interactive){
+  return new Promise((resolve, reject) => {
+    if(gdriveToken && gdriveToken.expiresAt > Date.now() + 60000){ resolve(gdriveToken.token); return; }
+    gdriveInit();
+    if(!gdriveTokenClient){ reject(new Error('구글 로그인 준비 안 됨 — 잠시 후 다시 시도해주세요.')); return; }
+    gdriveTokenClient.callback = (resp) => {
+      if(resp && resp.error){ reject(new Error(resp.error)); return; }
+      gdriveToken = { token: resp.access_token,
+        expiresAt: Date.now() + ((resp.expires_in ? resp.expires_in : 3600) * 1000) };
+      resolve(gdriveToken.token);
+    };
+    gdriveTokenClient.requestAccessToken({ prompt: interactive ? '' : 'none' });
+  });
+}
+
+async function gdriveFindFileId(token){
+  const q = encodeURIComponent("name='" + GDRIVE_FILENAME + "' and trashed=false");
+  const r = await fetch('https://www.googleapis.com/drive/v3/files?q=' + q +
+    '&spaces=drive&fields=files(id,modifiedTime)&orderBy=modifiedTime desc', {
+    headers: { Authorization: 'Bearer ' + token }
+  });
+  if(!r.ok) throw new Error('목록 조회 실패(' + r.status + ')');
+  const d = await r.json();
+  return (d.files && d.files[0]) ? d.files[0].id : null;
+}
+
+// resumable 업로드로 백업 저장(큰 PDF 대응). 기존 파일 있으면 갱신, 없으면 생성.
+async function gdriveUploadBackup(){
+  const token = await gdriveGetToken(true);
+  const blob = new Blob([await buildBackupJSON()], {type:'application/json'});
+  let fileId = gdriveFileId || await gdriveFindFileId(token);
+  const initUrl = fileId
+    ? 'https://www.googleapis.com/upload/drive/v3/files/' + fileId + '?uploadType=resumable&fields=id'
+    : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id';
+  const initRes = await fetch(initUrl, {
+    method: fileId ? 'PATCH' : 'POST',
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json; charset=UTF-8' },
+    body: JSON.stringify({ name: GDRIVE_FILENAME, mimeType: 'application/json' })
+  });
+  if(!initRes.ok) throw new Error('업로드 세션 실패(' + initRes.status + ')');
+  const session = initRes.headers.get('Location');
+  const putRes = await fetch(session, { method: 'PUT',
+    headers: { 'Content-Type': 'application/json' }, body: blob });
+  if(!putRes.ok) throw new Error('업로드 실패(' + putRes.status + ')');
+  const saved = await putRes.json();
+  gdriveFileId = saved.id;
+  localStorage.setItem('gdriveFileId', saved.id);
+  localStorage.setItem('gdriveLast', Date.now().toString());
+}
+
+// 버튼: 드라이브에 백업
+async function gdriveBackup(){
+  if(!gdriveConfigured()){ alert('아직 구글 드라이브 설정이 안 됐어요. 개발자에게 클라이언트 ID를 받아 넣어야 해요.'); return; }
+  setGStatus('드라이브에 백업 중…');
+  try{
+    await gdriveUploadBackup();
+    updateGStatus();
+    alert('구글 드라이브에 백업했어요.');
+  }catch(e){ updateGStatus(); alert('백업 실패: ' + e.message); }
+}
+
+// 버튼: 드라이브에서 불러오기
+async function gdriveRestore(){
+  if(!gdriveConfigured()){ alert('아직 구글 드라이브 설정이 안 됐어요.'); return; }
+  setGStatus('드라이브에서 불러오는 중…');
+  try{
+    const token = await gdriveGetToken(true);
+    const fileId = gdriveFileId || await gdriveFindFileId(token);
+    if(!fileId){ updateGStatus(); alert('드라이브에 백업이 아직 없어요. 먼저 "드라이브에 백업"을 해주세요.'); return; }
+    const r = await fetch('https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media', {
+      headers: { Authorization: 'Bearer ' + token }
+    });
+    if(!r.ok) throw new Error('다운로드 실패(' + r.status + ')');
+    const n = await applyBackup(await r.json());
+    gdriveFileId = fileId; localStorage.setItem('gdriveFileId', fileId);
+    renderDeckList();
+    updateGStatus();
+    alert(n + '개 강의안을 드라이브에서 불러왔어요.');
+  }catch(e){ updateGStatus(); alert('불러오기 실패: ' + e.message); }
+}
+
+// 강의안이 바뀌면(저장/삭제) 연결돼 있을 때 자동 백업(3초 디바운스).
+function scheduleAutoBackup(){
+  if(!gdriveConfigured()) return;
+  if(!gdriveToken && !localStorage.getItem('gdriveFileId')) return;  // 한 번이라도 연결한 적 있을 때만
+  clearTimeout(autoBackupT);
+  autoBackupT = setTimeout(async () => {
+    try{ await gdriveUploadBackup(); updateGStatus(); }catch(e){}
+  }, 3000);
 }
 
 /* ---- 타이머 ---- */
@@ -580,6 +723,7 @@ window.addEventListener('load', async () => {
   }catch(e){}
 
   await renderDeckList();
+  updateGStatus();
 
   const deckId = location.hash.slice(1);
   const view = new URLSearchParams(location.search).get('view');
