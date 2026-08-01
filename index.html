@@ -147,9 +147,48 @@
     #stage{flex-direction:column;}
     #scriptWrap{border-left:none; border-top:1px solid var(--line);}
   }
+
+  /* ===== 잠금 화면 ===== */
+  #lockScreen{
+    position:fixed; inset:0; z-index:9999; background:var(--bg);
+    display:flex; align-items:center; justify-content:center; padding:24px;
+  }
+  .lockBox{width:300px; max-width:90vw; text-align:center;}
+  .lockTitle{font-size:22px; font-weight:600; margin-bottom:6px;}
+  .lockSub{color:var(--ink-dim); font-size:14px; margin-bottom:20px;}
+  #lockPw{
+    width:100%; background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    color:var(--ink); font-size:20px; padding:14px 16px; text-align:center;
+    letter-spacing:.3em; font-family:inherit;
+  }
+  #lockPw:focus{outline:none; border-color:var(--accent);}
+  #lockEnter{
+    margin-top:14px; width:100%; padding:14px; border:none; border-radius:10px;
+    background:var(--accent); color:#1A1408; font-size:16px; font-weight:600;
+    cursor:pointer; font-family:inherit;
+  }
+  #lockEnter:hover{filter:brightness(1.08);}
+  #lockErr{color:#E86A5E; font-size:13px; margin-top:12px; min-height:18px;}
+  #lockChange{
+    background:none; border:none; color:var(--ink-dim); font-size:12.5px;
+    text-decoration:underline; cursor:pointer; margin-top:10px; font-family:inherit;
+  }
+  #lockChange:hover{color:var(--accent);}
 </style>
 </head>
 <body>
+
+<!-- 잠금 화면 -->
+<div id="lockScreen">
+  <div class="lockBox">
+    <div class="lockTitle">🔒 강의 프레젠터</div>
+    <p class="lockSub">비밀번호를 입력하세요</p>
+    <input id="lockPw" type="password" inputmode="numeric" autocomplete="off" placeholder="비밀번호">
+    <button id="lockEnter" onclick="tryUnlock()">들어가기</button>
+    <p id="lockErr"></p>
+    <button id="lockChange" onclick="changePassword()">비밀번호 변경</button>
+  </div>
+</div>
 
 <!-- 설정 화면 -->
 <div id="setup">
@@ -709,8 +748,41 @@ document.addEventListener('keydown', e => {
   if(e.key === 'Home'){ goTo(0, true); }
 });
 
+/* ===== 잠금(비밀번호) ===== */
+const LP_DEFAULT_PW = '181818';   // 초기 비밀번호 (변경하면 이 값은 더 이상 쓰이지 않음)
+async function lpHash(str){
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+async function lpCurrentHash(){
+  return localStorage.getItem('lp_pwhash') || await lpHash(LP_DEFAULT_PW);
+}
+async function tryUnlock(){
+  const el = document.getElementById('lockPw');
+  const err = document.getElementById('lockErr');
+  if(await lpHash(el.value) === await lpCurrentHash()){
+    sessionStorage.setItem('lp_unlocked','1');
+    document.getElementById('lockScreen').style.display = 'none';
+    await initApp();
+  }else{
+    err.textContent = '비밀번호가 틀렸어요.';
+    el.value = ''; el.focus();
+  }
+}
+async function changePassword(){
+  const cur = prompt('현재 비밀번호를 입력하세요');
+  if(cur === null) return;
+  if(await lpHash(cur) !== await lpCurrentHash()){ alert('현재 비밀번호가 틀렸어요.'); return; }
+  const n1 = prompt('새 비밀번호를 입력하세요');
+  if(n1 === null) return;
+  if(!n1.trim()){ alert('빈 비밀번호는 쓸 수 없어요.'); return; }
+  if(n1 !== prompt('새 비밀번호를 한 번 더 입력하세요')){ alert('두 번 입력한 새 비밀번호가 달라요.'); return; }
+  localStorage.setItem('lp_pwhash', await lpHash(n1));
+  alert('비밀번호를 바꿨어요. 다음부터 새 비밀번호로 들어오세요.');
+}
+
 /* ---- 초기화 ---- */
-window.addEventListener('load', async () => {
+async function initApp(){
   // 이전 버전(localStorage) 강의안의 제목·원고를 넘겨받음 (PDF는 새로 선택 필요)
   try{
     const old = JSON.parse(localStorage.getItem('lecturePresenterDecks') || '[]');
@@ -736,6 +808,19 @@ window.addEventListener('load', async () => {
         setView(view === 'slide' ? 'slide' : view === 'script' ? 'script' : 'full');
       }
     }
+  }
+}
+
+window.addEventListener('load', () => {
+  const view = new URLSearchParams(location.search).get('view');
+  // 프로젝터용 슬라이드 창(?view=)이거나 같은 탭에서 이미 잠금 해제했으면 통과.
+  if(view || sessionStorage.getItem('lp_unlocked') === '1'){
+    document.getElementById('lockScreen').style.display = 'none';
+    initApp();
+  }else{
+    const el = document.getElementById('lockPw');
+    el.addEventListener('keydown', e => { if(e.key === 'Enter') tryUnlock(); });
+    el.focus();
   }
 });
 </script>
