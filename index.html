@@ -174,6 +174,12 @@
     text-decoration:underline; cursor:pointer; margin-top:10px; font-family:inherit;
   }
   #lockChange:hover{color:var(--accent);}
+
+  /* ===== 복제(미러) 창 대기 화면 ===== */
+  #mirrorWait{
+    position:fixed; inset:0; z-index:5000; background:var(--bg); color:var(--ink-dim);
+    display:none; align-items:center; justify-content:center; font-size:18px; text-align:center; padding:24px;
+  }
 </style>
 </head>
 <body>
@@ -230,6 +236,9 @@
   <p id="setupErr"></p>
 </div>
 
+<!-- 복제(미러) 창 대기 화면 -->
+<div id="mirrorWait">다음 강의안을 준비 중이에요…</div>
+
 <!-- 프레젠터 화면 -->
 <div id="presenter">
   <div id="stage">
@@ -274,6 +283,8 @@ let pendingPdf = null; // {buf, pages, name} 방금 선택한 PDF
 let editingId = null;
 let sec = 0, timerRunning = false, timerInt = null;
 let renderToken = 0;
+// ?view= 로 열린 창 = 복제(미러) 창. 메인 창을 계속 따라간다.
+const isMirror = !!new URLSearchParams(location.search).get('view');
 
 /* ===== IndexedDB (PDF째 저장) ===== */
 function idb(){
@@ -428,7 +439,11 @@ async function beginShow(deck){
   document.getElementById('presenter').style.display = 'flex';
   render();
   renderSlide();
-  if(bc) bc.postMessage({type:'hello', deck: deck.id});
+  showMirrorWait(false);
+  if(bc){
+    if(isMirror) bc.postMessage({type:'hello'});             // 복제 창: 메인에게 현재 위치 알려달라고 요청
+    else bc.postMessage({type:'deck', id: deck.id, cur});     // 메인: "이 강의안 보여줘"라고 복제 창에 알림
+  }
 }
 
 /* ===== 화면 그리기 ===== */
@@ -483,15 +498,43 @@ function go(dir){ goTo(cur + dir, true); }
 /* ===== 창 간 동기화 ===== */
 const bc = ('BroadcastChannel' in window) ? new BroadcastChannel('lecture-presenter') : null;
 if(bc){
-  bc.onmessage = (e) => {
+  bc.onmessage = async (e) => {
     const m = e.data || {};
-    if(m.type === 'nav' && typeof m.cur === 'number') goTo(m.cur, false);
-    if(m.type === 'hello' && document.getElementById('presenter').style.display === 'flex'){
-      bc.postMessage({type:'nav', cur});
+    if(m.type === 'nav' && typeof m.cur === 'number'){ goTo(m.cur, false); }
+    else if(m.type === 'deck' && isMirror){ await mirrorLoadDeck(m.id, m.cur); }
+    else if(m.type === 'toList' && isMirror){ showMirrorWait(true); }
+    else if(m.type === 'hello'){
+      // 진행 중인 메인 창이 새로 뜬 복제 창에 현재 상태(강의안+위치)를 알려준다.
+      if(!isMirror && currentDeckId && document.getElementById('presenter').style.display === 'flex'){
+        bc.postMessage({type:'deck', id: currentDeckId, cur});
+        bc.postMessage({type:'nav', cur});
+      }
     }
   };
 }
 function broadcast(){ if(bc) bc.postMessage({type:'nav', cur}); }
+
+/* 복제(미러) 창이 메인이 연 강의안으로 전환해 따라간다. */
+async function mirrorLoadDeck(id, atCur){
+  if(!id) return;
+  if(id === currentDeckId){                       // 같은 강의안이면 위치만 맞춤
+    showMirrorWait(false);
+    if(typeof atCur === 'number') goTo(atCur, false);
+    return;
+  }
+  const d = await dbGet(id);
+  if(d && d.pdf){
+    await beginShow(d);                            // 새 강의안 로드 (내부에서 wait 숨김)
+    setView('slide');                              // 복제 창은 슬라이드만
+    if(typeof atCur === 'number') goTo(atCur, false);
+  }
+}
+
+/* 복제 창 대기 화면(메인이 리스트로 갔을 때). */
+function showMirrorWait(on){
+  const el = document.getElementById('mirrorWait');
+  if(el) el.style.display = on ? 'flex' : 'none';
+}
 
 /* ===== 보기 모드 ===== */
 function setView(v){
@@ -525,6 +568,7 @@ function backToSetup(){
   document.getElementById('setup').style.display = 'block';
   pauseTimer();
   renderDeckList();
+  if(bc && !isMirror) bc.postMessage({type:'toList'});   // 복제 창은 대기 화면으로
 }
 
 /* ===== 백업 ===== */
