@@ -74,6 +74,16 @@
   .deck button:hover{border-color:var(--accent); color:var(--accent);}
   .deck button.play{border-color:var(--accent); color:var(--accent); font-weight:600;}
   #deckEmpty{font-size:13px; color:var(--ink-dim); padding:4px 2px 0;}
+  .done-toggle{
+    display:flex; align-items:center; justify-content:space-between;
+    margin:14px 0 6px; padding-top:10px; border-top:1px dashed var(--line);
+    font-size:12.5px; color:var(--ink-dim);
+  }
+  .done-toggle button{
+    background:none; border:none; color:var(--accent); font-size:12.5px;
+    text-decoration:underline; cursor:pointer; font-family:inherit;
+  }
+  .deck-done{opacity:.55;}
   .deck-tools{display:flex; gap:8px; margin-top:6px;}
   .deck-tools button{
     background:none; border:none; color:var(--ink-dim); font-size:12px;
@@ -352,45 +362,79 @@ async function onPdfSelected(ev){
 }
 
 /* ===== 강의안 목록 ===== */
+let showDone = false;   // 완료한 강의안 펼쳐 보기 여부
 async function renderDeckList(){
   const list = document.getElementById('deckList');
   const empty = document.getElementById('deckEmpty');
   let decks = [];
   try{ decks = await dbAll(); }catch(e){}
   decks.sort((a,b) => b.updated - a.updated);
+  const active = decks.filter(d => !d.done);
+  const done = decks.filter(d => d.done);
   list.innerHTML = '';
-  empty.style.display = decks.length ? 'none' : 'block';
-  decks.forEach(d => {
-    const date = new Date(d.updated);
-    const dateStr = (date.getMonth()+1) + '/' + date.getDate();
-    const el = document.createElement('div');
-    el.className = 'deck';
-    const info = document.createElement('div');
-    info.className = 'info';
-    const pdfState = d.pdf ? ('슬라이드 ' + d.pages + '장') : 'PDF 없음 — 클릭해서 추가';
-    info.innerHTML = '<div class="title"></div><div class="meta">' + pdfState + ' · ' + dateStr + ' 수정</div>';
-    info.querySelector('.title').textContent = d.title || '(제목 없음)';
-    info.onclick = () => fillFromDeck(d);
-    info.title = '클릭하면 아래 입력칸에 불러옵니다';
-    const playBtn = document.createElement('button');
-    playBtn.className = 'play'; playBtn.textContent = '▶ 시작';
-    playBtn.onclick = () => {
-      if(!d.pdf){ fillFromDeck(d); alert('이 강의안에는 PDF가 없어요. PDF를 선택한 뒤 시작해주세요.'); return; }
-      beginShow(d);
-    };
-    const delBtn = document.createElement('button');
-    delBtn.textContent = '삭제';
-    delBtn.onclick = async () => {
-      if(confirm('"' + (d.title || '제목 없음') + '" 강의안을 삭제할까요?')){
-        await dbDel(d.id);
-        if(editingId === d.id) editingId = null;
-        scheduleAutoBackup();
-        renderDeckList();
-      }
-    };
-    el.appendChild(info); el.appendChild(playBtn); el.appendChild(delBtn);
-    list.appendChild(el);
-  });
+
+  active.forEach(d => list.appendChild(deckRow(d)));
+
+  // 완료한 강의안: 기본 숨김, 맨 아래 토글로 보기/숨기기
+  if(done.length){
+    const bar = document.createElement('div');
+    bar.className = 'done-toggle';
+    const label = document.createElement('span');
+    label.textContent = '✓ 완료한 강의안 ' + done.length + '개';
+    const t = document.createElement('button');
+    t.textContent = showDone ? '숨기기' : '보기';
+    t.onclick = () => { showDone = !showDone; renderDeckList(); };
+    bar.appendChild(label); bar.appendChild(t);
+    list.appendChild(bar);
+    if(showDone) done.forEach(d => list.appendChild(deckRow(d)));
+  }
+
+  // '비어있음' 안내는 진행 중 강의안이 하나도 없을 때만
+  empty.style.display = active.length ? 'none' : 'block';
+}
+
+function deckRow(d){
+  const date = new Date(d.updated);
+  const dateStr = (date.getMonth()+1) + '/' + date.getDate();
+  const el = document.createElement('div');
+  el.className = 'deck' + (d.done ? ' deck-done' : '');
+  const info = document.createElement('div');
+  info.className = 'info';
+  const pdfState = d.pdf ? ('슬라이드 ' + d.pages + '장') : 'PDF 없음 — 클릭해서 추가';
+  info.innerHTML = '<div class="title"></div><div class="meta">' + pdfState + ' · ' + dateStr + ' 수정</div>';
+  info.querySelector('.title').textContent = (d.done ? '✓ ' : '') + (d.title || '(제목 없음)');
+  info.onclick = () => fillFromDeck(d);
+  info.title = '클릭하면 아래 입력칸에 불러옵니다';
+
+  const playBtn = document.createElement('button');
+  playBtn.className = 'play'; playBtn.textContent = '▶ 시작';
+  playBtn.onclick = () => {
+    if(!d.pdf){ fillFromDeck(d); alert('이 강의안에는 PDF가 없어요. PDF를 선택한 뒤 시작해주세요.'); return; }
+    beginShow(d);
+  };
+
+  const doneBtn = document.createElement('button');
+  doneBtn.textContent = d.done ? '완료 취소' : '완료';
+  doneBtn.onclick = async () => {
+    d.done = !d.done;
+    await dbPut(d);
+    scheduleAutoBackup();
+    renderDeckList();
+  };
+
+  const delBtn = document.createElement('button');
+  delBtn.textContent = '삭제';
+  delBtn.onclick = async () => {
+    if(confirm('"' + (d.title || '제목 없음') + '" 강의안을 삭제할까요?')){
+      await dbDel(d.id);
+      if(editingId === d.id) editingId = null;
+      scheduleAutoBackup();
+      renderDeckList();
+    }
+  };
+
+  el.appendChild(info); el.appendChild(playBtn); el.appendChild(doneBtn); el.appendChild(delBtn);
+  return el;
 }
 function fillFromDeck(d){
   editingId = d.id;
@@ -643,6 +687,7 @@ async function buildBackupJSON(){
   const decks = await dbAll();
   const out = decks.map(d => ({
     id: d.id, title: d.title, s: d.s, pages: d.pages, updated: d.updated,
+    done: !!d.done,
     pdfB64: d.pdf ? bufToB64(d.pdf) : null
   }));
   return JSON.stringify(out);
@@ -654,6 +699,7 @@ async function applyBackup(incoming){
     if(!d.id) continue;
     await dbPut({
       id: d.id, title: d.title, s: d.s, pages: d.pages, updated: d.updated || Date.now(),
+      done: !!d.done,
       pdf: d.pdfB64 ? b64ToBuf(d.pdfB64) : null
     });
     n++;
