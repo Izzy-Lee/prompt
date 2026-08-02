@@ -76,7 +76,7 @@
   #deckEmpty{font-size:13px; color:var(--ink-dim); padding:4px 2px 0;}
   .done-toggle{
     display:flex; align-items:center; justify-content:space-between;
-    margin:14px 0 6px; padding-top:10px; border-top:1px dashed var(--line);
+    margin:0 0 10px; padding-bottom:10px; border-bottom:1px dashed var(--line);
     font-size:12.5px; color:var(--ink-dim);
   }
   .done-toggle button{
@@ -373,9 +373,7 @@ async function renderDeckList(){
   const done = decks.filter(d => d.done);
   list.innerHTML = '';
 
-  active.forEach(d => list.appendChild(deckRow(d)));
-
-  // 완료한 강의안: 기본 숨김, 맨 아래 토글로 보기/숨기기
+  // 완료한 강의안: 맨 위 토글로 접기/펼치기(기본 숨김)
   if(done.length){
     const bar = document.createElement('div');
     bar.className = 'done-toggle';
@@ -388,6 +386,9 @@ async function renderDeckList(){
     list.appendChild(bar);
     if(showDone) done.forEach(d => list.appendChild(deckRow(d)));
   }
+
+  // 진행 중 강의안
+  active.forEach(d => list.appendChild(deckRow(d)));
 
   // '비어있음' 안내는 진행 중 강의안이 하나도 없을 때만
   empty.style.display = active.length ? 'none' : 'block';
