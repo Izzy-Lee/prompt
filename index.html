@@ -89,9 +89,16 @@
 
   #slideWrap{
     flex:1.4; position:relative; background:#000; min-width:0; min-height:0;
-    display:flex; align-items:center; justify-content:center;
+    display:flex; align-items:center; justify-content:center; overflow:hidden;
   }
-  #slideCanvas{max-width:100%; max-height:100%;}
+  #slideCanvas{max-width:100%; max-height:100%; transform-origin:center center;}
+  /* 커서 강조 원형(레이저 포인터) */
+  #spot{
+    position:absolute; left:0; top:0; width:64px; height:64px; margin:-32px 0 0 -32px;
+    border-radius:50%; border:3px solid rgba(232,163,61,.95);
+    box-shadow:0 0 0 3px rgba(0,0,0,.35), 0 0 22px 8px rgba(232,163,61,.40);
+    pointer-events:none; display:none; z-index:20;
+  }
 
   #scriptWrap{
     flex:1; display:flex; flex-direction:column; min-width:0; min-height:0;
@@ -233,7 +240,7 @@
 <!-- 프레젠터 화면 -->
 <div id="presenter">
   <div id="stage">
-    <div id="slideWrap"><canvas id="slideCanvas"></canvas></div>
+    <div id="slideWrap"><canvas id="slideCanvas"></canvas><div id="spot"></div></div>
     <div id="scriptWrap">
       <div id="scriptNow"></div>
       <div id="scriptNext"></div>
@@ -253,6 +260,12 @@
     <button id="vSlide" onclick="setView('slide')">슬라이드만</button>
     <button id="vScript" onclick="setView('script')">원고만</button>
     <button onclick="openSlideWindow()" title="프로젝터용 슬라이드 전용 창 열기">⧉ 새 창</button>
+    <span class="spacer"></span>
+    <button onclick="slideZoomBy(-0.15)" title="슬라이드 축소">🔍−</button>
+    <button onclick="slideZoomFit()" title="화면에 딱 맞춤(회전·확대 초기화)">맞춤</button>
+    <button onclick="slideZoomBy(0.15)" title="슬라이드 확대">🔍＋</button>
+    <button onclick="slideRotate()" title="90° 회전(뒤집힌 슬라이드 바로잡기)">↻ 회전</button>
+    <button onclick="toggleSpot()" id="spotBtn" title="커서 강조 포인터(프로젝터에도 표시)">🔴 포인터</button>
     <span class="spacer"></span>
     <button onclick="fontSize(-2)">글자−</button>
     <button onclick="fontSize(2)">글자＋</button>
@@ -465,6 +478,7 @@ async function renderSlide(){
     canvas.width = vp.width; canvas.height = vp.height;
     canvas.style.width = (vp.width / dpr) + 'px';
     canvas.style.height = (vp.height / dpr) + 'px';
+    applySlideTransform();
     const ctx = canvas.getContext('2d');
     await page.render({canvasContext: ctx, viewport: vp}).promise;
   }catch(e){}
@@ -473,6 +487,48 @@ let resizeT = null;
 window.addEventListener('resize', () => {
   clearTimeout(resizeT);
   resizeT = setTimeout(renderSlide, 150);
+});
+// 슬라이드 영역 크기가 바뀌면(창 열림·배치·보기모드 전환 등) 자동으로 다시 맞춘다 — 새 창 확대 문제 방지.
+if('ResizeObserver' in window){
+  const ro = new ResizeObserver(() => { clearTimeout(resizeT); resizeT = setTimeout(renderSlide, 60); });
+  ro.observe(document.getElementById('slideWrap'));
+}
+
+/* ===== 슬라이드 줌·회전 ===== */
+let slideZoom = 1, slideRot = 0;
+function applySlideTransform(){
+  const c = document.getElementById('slideCanvas');
+  if(c) c.style.transform = 'rotate(' + slideRot + 'deg) scale(' + slideZoom + ')';
+}
+function slideZoomBy(d){ slideZoom = Math.min(4, Math.max(0.3, +(slideZoom + d).toFixed(2))); applySlideTransform(); }
+function slideZoomFit(){ slideZoom = 1; slideRot = 0; applySlideTransform(); }
+function slideRotate(){ slideRot = (slideRot + 90) % 360; applySlideTransform(); }
+
+/* ===== 커서 강조 포인터(레이저) ===== */
+let spotOn = false;
+function toggleSpot(){
+  spotOn = !spotOn;
+  document.getElementById('spotBtn').classList.toggle('active', spotOn);
+  const s = document.getElementById('spot');
+  if(s) s.style.display = spotOn ? 'block' : 'none';
+  document.getElementById('slideWrap').style.cursor = spotOn ? 'none' : '';
+  if(bc && !isMirror) bc.postMessage({type:'ptrOn', on: spotOn});
+}
+function positionSpot(xr, yr){
+  const wrap = document.getElementById('slideWrap');
+  const s = document.getElementById('spot');
+  if(!wrap || !s) return;
+  s.style.left = (xr * wrap.clientWidth) + 'px';
+  s.style.top  = (yr * wrap.clientHeight) + 'px';
+  s.style.display = 'block';
+}
+document.getElementById('slideWrap').addEventListener('mousemove', e => {
+  if(!spotOn) return;
+  const rect = e.currentTarget.getBoundingClientRect();
+  const xr = (e.clientX - rect.left) / rect.width;
+  const yr = (e.clientY - rect.top) / rect.height;
+  positionSpot(xr, yr);
+  if(bc && !isMirror) bc.postMessage({type:'ptr', xr, yr});   // 프로젝터(복제 창)에도 포인터 표시
 });
 
 /* ===== 이동 ===== */
@@ -493,6 +549,10 @@ if(bc){
     if(m.type === 'nav' && typeof m.cur === 'number'){ goTo(m.cur, false); }
     else if(m.type === 'deck' && isMirror){ await mirrorLoadDeck(m.id, m.cur); }
     else if(m.type === 'toList' && isMirror){ mirrorShowList(); }
+    else if(m.type === 'ptr' && isMirror){ positionSpot(m.xr, m.yr); }
+    else if(m.type === 'ptrOn' && isMirror){
+      const s = document.getElementById('spot'); if(s) s.style.display = m.on ? 'block' : 'none';
+    }
     else if(m.type === 'hello'){
       // 진행 중인 메인 창이 새로 뜬 복제 창에 현재 상태(강의안+위치)를 알려준다.
       if(!isMirror && currentDeckId && document.getElementById('presenter').style.display === 'flex'){
