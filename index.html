@@ -174,12 +174,6 @@
     text-decoration:underline; cursor:pointer; margin-top:10px; font-family:inherit;
   }
   #lockChange:hover{color:var(--accent);}
-
-  /* ===== 복제(미러) 창 대기 화면 ===== */
-  #mirrorWait{
-    position:fixed; inset:0; z-index:5000; background:var(--bg); color:var(--ink-dim);
-    display:none; align-items:center; justify-content:center; font-size:18px; text-align:center; padding:24px;
-  }
 </style>
 </head>
 <body>
@@ -235,9 +229,6 @@
   <button id="startBtn" onclick="startFromForm()">저장하고 시작</button>
   <p id="setupErr"></p>
 </div>
-
-<!-- 복제(미러) 창 대기 화면 -->
-<div id="mirrorWait">다음 강의안을 준비 중이에요…</div>
 
 <!-- 프레젠터 화면 -->
 <div id="presenter">
@@ -439,7 +430,6 @@ async function beginShow(deck){
   document.getElementById('presenter').style.display = 'flex';
   render();
   renderSlide();
-  showMirrorWait(false);
   if(bc){
     if(isMirror) bc.postMessage({type:'hello'});             // 복제 창: 메인에게 현재 위치 알려달라고 요청
     else bc.postMessage({type:'deck', id: deck.id, cur});     // 메인: "이 강의안 보여줘"라고 복제 창에 알림
@@ -502,7 +492,7 @@ if(bc){
     const m = e.data || {};
     if(m.type === 'nav' && typeof m.cur === 'number'){ goTo(m.cur, false); }
     else if(m.type === 'deck' && isMirror){ await mirrorLoadDeck(m.id, m.cur); }
-    else if(m.type === 'toList' && isMirror){ showMirrorWait(true); }
+    else if(m.type === 'toList' && isMirror){ mirrorShowList(); }
     else if(m.type === 'hello'){
       // 진행 중인 메인 창이 새로 뜬 복제 창에 현재 상태(강의안+위치)를 알려준다.
       if(!isMirror && currentDeckId && document.getElementById('presenter').style.display === 'flex'){
@@ -518,7 +508,6 @@ function broadcast(){ if(bc) bc.postMessage({type:'nav', cur}); }
 async function mirrorLoadDeck(id, atCur){
   if(!id) return;
   if(id === currentDeckId){                       // 같은 강의안이면 위치만 맞춤
-    showMirrorWait(false);
     if(typeof atCur === 'number') goTo(atCur, false);
     return;
   }
@@ -530,10 +519,13 @@ async function mirrorLoadDeck(id, atCur){
   }
 }
 
-/* 복제 창 대기 화면(메인이 리스트로 갔을 때). */
-function showMirrorWait(on){
-  const el = document.getElementById('mirrorWait');
-  if(el) el.style.display = on ? 'flex' : 'none';
+/* 복제 창: 메인이 리스트로 가면 복제 창도 리스트(설정) 화면을 그대로 보여준다(완전 복제). */
+function mirrorShowList(){
+  if(pdfDoc){ try{ pdfDoc.destroy(); }catch(e){} pdfDoc = null; }
+  currentDeckId = null;   // 같은 강의안을 다시 시작해도 새로 로드되도록
+  document.getElementById('presenter').style.display = 'none';
+  document.getElementById('setup').style.display = 'block';
+  renderDeckList();
 }
 
 /* ===== 보기 모드 ===== */
