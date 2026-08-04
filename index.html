@@ -105,6 +105,26 @@
   .deck-tools button:hover{color:var(--accent);}
   #importFile{display:none;}
 
+  /* 드라이브 버전 기록 팝업 */
+  #revBox{
+    position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:60;
+    display:flex; align-items:center; justify-content:center; padding:20px;
+  }
+  .revPanel{
+    background:var(--panel); border:1px solid var(--line); border-radius:14px;
+    padding:22px 24px; width:460px; max-width:100%; max-height:80vh; overflow-y:auto;
+  }
+  .revPanel h3{margin:0 0 6px; font-size:17px;}
+  .revRow{
+    display:flex; align-items:center; justify-content:space-between; gap:12px;
+    padding:10px 0; border-top:1px solid var(--line); font-size:14px;
+  }
+  .revRow button, .revClose{
+    background:var(--accent); color:#1a1712; border:none; border-radius:8px;
+    padding:7px 12px; font-size:13px; font-weight:600; cursor:pointer; white-space:nowrap;
+  }
+  .revClose{background:transparent; color:var(--ink-dim); margin-top:14px;}
+
   /* ===== 프레젠터 화면 ===== */
   #presenter{display:none; height:100vh; flex-direction:column;}
   #stage{flex:1; display:flex; min-height:0;}
@@ -239,6 +259,7 @@
     <div class="deck-tools">
       <button onclick="gdriveBackup()">☁️ 드라이브에 백업</button>
       <button onclick="gdriveRestore()">☁️ 드라이브에서 불러오기</button>
+      <button onclick="gdriveShowRevisions()">🕘 이전 백업에서 복구</button>
       <button onclick="exportDecks()">파일로 내보내기</button>
       <button onclick="document.getElementById('importFile').click()">파일 가져오기</button>
       <input type="file" id="importFile" accept=".json" onchange="importDecks(event)">
@@ -355,6 +376,15 @@ async function dbAll(){
   return new Promise((res, rej) => {
     const req = db.transaction('decks').objectStore('decks').getAll();
     req.onsuccess = () => res(req.result || []);
+    req.onerror = () => rej(req.error);
+  });
+}
+// 강의안 개수만 세기(PDF를 메모리에 안 올려서 가벼움 — 백업 안전장치용)
+async function dbCount(){
+  const db = await idb();
+  return new Promise((res, rej) => {
+    const req = db.transaction('decks').objectStore('decks').count();
+    req.onsuccess = () => res(req.result || 0);
     req.onerror = () => rej(req.error);
   });
 }
@@ -570,7 +600,12 @@ async function startFromForm(){
   const id = editingId || ('d' + Date.now() + Math.floor(Math.random()*1000));
   editingId = id;
   const deck = {id, title, s: raw, pdf: pdfBuf, pages, updated: Date.now(), category: cat, day: day, done};
-  try{ await dbPut(deck); }catch(e){}
+  // 저장 실패를 조용히 넘기지 않는다(저장된 줄 알았는데 사라지는 사고 방지)
+  try{ await dbPut(deck); }
+  catch(e){
+    alert('강의안을 이 브라우저에 저장하지 못했어요: ' + (e && e.message ? e.message : e) +
+          '\n\n저장 공간이 부족할 수 있어요. 이대로 수업은 진행되지만 목록에는 남지 않습니다.');
+  }
   scheduleAutoBackup();
   beginShow(deck);
 }
@@ -962,11 +997,19 @@ async function gdriveUploadBackup(){
   gdriveFileId = saved.id;
   localStorage.setItem('gdriveFileId', saved.id);
   localStorage.setItem('gdriveLast', Date.now().toString());
+  try{ localStorage.setItem('gdriveLastCount', String(await dbCount())); }catch(e){}
 }
 
 // 버튼: 드라이브에 백업
 async function gdriveBackup(){
   if(!gdriveConfigured()){ alert('아직 구글 드라이브 설정이 안 됐어요. 개발자에게 클라이언트 ID를 받아 넣어야 해요.'); return; }
+  try{
+    const n = await dbCount();
+    const prev = parseInt(localStorage.getItem('gdriveLastCount') || '-1', 10);
+    if(prev > 0 && n < prev &&
+       !confirm('지금 강의안이 ' + n + '개인데, 지난 백업에는 ' + prev + '개였어요.\n' +
+                '이대로 백업하면 드라이브의 백업도 ' + n + '개로 덮어써집니다.\n\n그래도 백업할까요?')) return;
+  }catch(e){}
   setGStatus('드라이브에 백업 중…');
   try{
     await gdriveUploadBackup();
@@ -976,6 +1019,93 @@ async function gdriveBackup(){
 }
 
 // 버튼: 드라이브에서 불러오기
+/* ===== 드라이브 이전 버전(버전 기록)에서 복구 =====
+   드라이브는 덮어쓴 파일의 이전 버전을 30일간 보관한다. 실수로 줄어든 상태가 백업된 경우,
+   드라이브 웹 메뉴를 찾아 헤맬 필요 없이 앱에서 바로 그 시점 백업을 골라 되살린다. */
+async function gdriveListRevisions(){
+  const token = await gdriveGetToken(true);
+  const fileId = gdriveFileId || await gdriveFindFileId(token);
+  if(!fileId) throw new Error('드라이브에 백업 파일이 아직 없어요.');
+  const r = await fetch('https://www.googleapis.com/drive/v3/files/' + fileId +
+    '/revisions?pageSize=200&fields=revisions(id,modifiedTime,size)', {
+    headers: { Authorization: 'Bearer ' + token }
+  });
+  if(!r.ok) throw new Error('버전 목록 조회 실패(' + r.status + ')');
+  const d = await r.json();
+  const list = (d.revisions || []).slice().reverse();   // 최신이 위로
+  if(!list.length) throw new Error('보관된 이전 버전이 없어요.');
+  return {fileId, list};
+}
+function revLabel(rev){
+  const d = new Date(rev.modifiedTime);
+  const mb = rev.size ? (parseInt(rev.size,10) / 1048576).toFixed(1) + 'MB' : '';
+  const week = ['일','월','화','수','목','금','토'][d.getDay()];
+  return d.toLocaleDateString('ko-KR') + '(' + week + ') ' + d.toTimeString().slice(0,5) + (mb ? ' · ' + mb : '');
+}
+function closeRevBox(){
+  const el = document.getElementById('revBox');
+  if(el) el.remove();
+}
+async function gdriveShowRevisions(){
+  if(!gdriveConfigured()){ alert('아직 구글 드라이브 설정이 안 됐어요.'); return; }
+  setGStatus('드라이브 버전 기록을 읽는 중…');
+  let info;
+  try{ info = await gdriveListRevisions(); }
+  catch(e){ updateGStatus(); alert('버전 목록을 못 읽었어요: ' + e.message); return; }
+  updateGStatus();
+  closeRevBox();
+
+  const box = document.createElement('div');
+  box.id = 'revBox';
+  const panel = document.createElement('div');
+  panel.className = 'revPanel';
+  const h = document.createElement('h3');
+  h.textContent = '드라이브 백업 버전 기록';
+  const p = document.createElement('p');
+  p.className = 'hint';
+  p.textContent = '되돌리고 싶은 시점을 고르세요. 그 시점에 있던 강의안이 되살아나고, ' +
+                  '지금만 있는 강의안은 지워지지 않습니다.';
+  panel.appendChild(h); panel.appendChild(p);
+  info.list.forEach((rev, i) => {
+    const row = document.createElement('div');
+    row.className = 'revRow';
+    const label = document.createElement('span');
+    label.textContent = revLabel(rev) + (i === 0 ? '  (현재 백업)' : '');
+    const b = document.createElement('button');
+    b.textContent = '이 버전으로 복구';
+    b.onclick = () => gdriveRestoreRevision(info.fileId, rev);
+    row.appendChild(label); row.appendChild(b);
+    panel.appendChild(row);
+  });
+  const close = document.createElement('button');
+  close.className = 'revClose'; close.textContent = '닫기';
+  close.onclick = closeRevBox;
+  panel.appendChild(close);
+  box.appendChild(panel);
+  box.onclick = e => { if(e.target === box) closeRevBox(); };
+  document.body.appendChild(box);
+}
+async function gdriveRestoreRevision(fileId, rev){
+  const when = revLabel(rev);
+  if(!confirm(when + ' 백업으로 되돌릴까요?\n\n' +
+              '· 그 시점에 있던 강의안이 되살아납니다.\n' +
+              '· 같은 강의안은 그 시점 내용(원고·완료 표시)으로 덮어써집니다.\n' +
+              '· 지금만 있는 강의안은 그대로 남습니다.')) return;
+  setGStatus('이전 백업을 불러오는 중… (파일이 커서 1~2분 걸릴 수 있어요)');
+  try{
+    const token = await gdriveGetToken(true);
+    const r = await fetch('https://www.googleapis.com/drive/v3/files/' + fileId +
+      '/revisions/' + rev.id + '?alt=media', { headers: { Authorization: 'Bearer ' + token } });
+    if(!r.ok) throw new Error('다운로드 실패(' + r.status + ')');
+    const n = await applyBackup(await r.json());
+    closeRevBox();
+    await renderDeckList();
+    try{ localStorage.setItem('gdriveLastCount', String(await dbCount())); }catch(e){}
+    updateGStatus();
+    alert(n + '개 강의안을 ' + when + ' 백업에서 되살렸어요.');
+  }catch(e){ updateGStatus(); alert('복구 실패: ' + e.message); }
+}
+
 async function gdriveRestore(){
   if(!gdriveConfigured()){ alert('아직 구글 드라이브 설정이 안 됐어요.'); return; }
   setGStatus('드라이브에서 불러오는 중…');
@@ -1001,7 +1131,18 @@ function scheduleAutoBackup(){
   if(!gdriveToken && !localStorage.getItem('gdriveFileId')) return;  // 한 번이라도 연결한 적 있을 때만
   clearTimeout(autoBackupT);
   autoBackupT = setTimeout(async () => {
-    try{ await gdriveUploadBackup(); updateGStatus(); }catch(e){}
+    try{
+      // 안전장치: 강의안이 줄어든 상태를 자동으로 덮어쓰지 않는다.
+      // (한쪽 기기에서 목록이 비거나 줄어든 채 자동 백업이 돌면 드라이브의 온전한 백업이 날아감)
+      const n = await dbCount();
+      const prev = parseInt(localStorage.getItem('gdriveLastCount') || '-1', 10);
+      if(prev > 0 && n < prev){
+        setGStatus('⚠️ 자동 백업을 멈췄어요 — 강의안이 ' + prev + '개에서 ' + n + '개로 줄었습니다. ' +
+                   '실수로 지운 게 아닌지 확인한 뒤 "드라이브에 백업"을 직접 눌러주세요.');
+        return;
+      }
+      await gdriveUploadBackup(); updateGStatus();
+    }catch(e){}
   }, 3000);
 }
 
@@ -1077,11 +1218,15 @@ async function initApp(){
     const old = JSON.parse(localStorage.getItem('lecturePresenterDecks') || '[]');
     if(old.length){
       for(const d of old){
+        if(await dbGet(d.id)) continue;   // 이미 있는 강의안을 PDF 없는 옛 자료로 덮어쓰지 않는다
         await dbPut({id: d.id, title: d.title, s: d.s, pages: 0, pdf: null, updated: d.updated || Date.now()});
       }
       localStorage.removeItem('lecturePresenterDecks');
     }
   }catch(e){}
+
+  // 브라우저가 저장 공간을 정리할 때 강의안을 지우지 않도록 영속 저장 요청
+  try{ if(navigator.storage && navigator.storage.persist) await navigator.storage.persist(); }catch(e){}
 
   await renderDeckList();
   updateGStatus();
